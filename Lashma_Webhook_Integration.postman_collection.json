@@ -1,0 +1,716 @@
+{
+  "info": {
+    "_postman_id": "lashma-webhook-integration",
+    "name": "Lashma Webhook Integration",
+    "description": "Webhook integration collection for Lashma Insurance App to Field Tracker",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "0"
+  },
+  "item": [
+    {
+      "name": "Setup & Configuration",
+      "item": [
+        {
+          "name": "README - Start Here",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "https://example.com/README",
+              "protocol": "https",
+              "host": ["example", "com"],
+              "path": ["README"]
+            },
+            "description": "# Setup Instructions\n\n1. **Set Environment Variables:**\n   - Go to \"Environments\" tab\n   - Select or create \"Lashma Webhook\" environment\n   - Set these variables:\n     - `webhook_secret`: Your WEBHOOK_SECRET key (256-bit hex string)\n     - `base_url`: https://field-tracker.lashma.com (or staging URL)\n     - `agent_id`: Your internal agent UUID\n     - `agent_email`: Agent email address\n\n2. **Generate Webhook Secret (One-time):**\n   - Use the \"Generate Webhook Secret\" request to create a random secret\n   - Or provide your own 256-bit hex string\n   - Save it securely\n\n3. **Test Each Event:**\n   - Use the provided requests to send test webhooks\n   - Pre-scripts automatically generate event IDs, timestamps, and signatures\n   - Verify 200 OK responses\n\n4. **Check Logs:**\n   - Review Field Tracker logs for any errors\n   - Verify agent mapping was created\n   - Check event storage in database"
+          }
+        },
+        {
+          "name": "Generate Webhook Secret",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// Generate a random 256-bit hex string for WEBHOOK_SECRET",
+                  "const crypto = require('crypto');",
+                  "const secret = crypto.randomBytes(32).toString('hex');",
+                  "console.log('New Webhook Secret:', secret);",
+                  "console.log('Length:', secret.length, 'characters');",
+                  "console.log('Set this in your environment variables as: webhook_secret');",
+                  "pm.environment.set('webhook_secret', secret);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "https://example.com",
+              "protocol": "https",
+              "host": ["example", "com"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Enrollment Events",
+      "item": [
+        {
+          "name": "Send Enrollment Created Event",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Generate unique event ID",
+                  "const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);",
+                  "const sequence = Math.floor(Math.random() * 10000);",
+                  "const eventId = `evt_${timestamp}_enrollment_${sequence}`;",
+                  "pm.environment.set('enrollment_event_id', eventId);",
+                  "",
+                  "// Get current ISO timestamp",
+                  "const isoTimestamp = new Date().toISOString();",
+                  "pm.environment.set('event_timestamp', isoTimestamp);",
+                  "",
+                  "// Get environment variables",
+                  "const secret = pm.environment.get('webhook_secret');",
+                  "const agentId = pm.environment.get('agent_id') || 'agent_uuid_test';",
+                  "const agentEmail = pm.environment.get('agent_email') || 'test@lashma.com';",
+                  "pm.environment.set('current_agent_id', agentId);",
+                  "pm.environment.set('current_agent_email', agentEmail);",
+                  "",
+                  "// Log for debugging",
+                  "console.log('Event ID:', eventId);",
+                  "console.log('Timestamp:', isoTimestamp);",
+                  "console.log('Agent Email:', agentEmail);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// Verify response",
+                  "pm.test('Status code is 200', function() {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response contains success flag', function() {",
+                  "  const jsonData = pm.response.json();",
+                  "  pm.expect(jsonData.success).to.be.true;",
+                  "});",
+                  "",
+                  "pm.test('Response contains event ID', function() {",
+                  "  const jsonData = pm.response.json();",
+                  "  pm.expect(jsonData).to.have.property('eventId');",
+                  "});",
+                  "",
+                  "// Log success",
+                  "if (pm.response.code === 200) {",
+                  "  console.log('✓ Enrollment event sent successfully');",
+                  "  console.log('Event ID:', pm.environment.get('enrollment_event_id'));",
+                  "} else {",
+                  "  console.log('✗ Error:', pm.response.text());",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{enrollment_signature}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event_type\": \"enrollment_created\",\n  \"event_id\": \"{{enrollment_event_id}}\",\n  \"agent_id\": \"{{current_agent_id}}\",\n  \"agent_email\": \"{{current_agent_email}}\",\n  \"enrollment_count\": 1,\n  \"timestamp\": \"{{event_timestamp}}\",\n  \"signature\": \"{{enrollment_signature}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/webhooks/insurance-events",
+              "host": ["{{base_url}}"],
+              "path": ["api", "webhooks", "insurance-events"]
+            },
+            "description": "Send enrollment created event to Field Tracker\n\nThis event is sent when an agent successfully enrolls a new client."
+          }
+        },
+        {
+          "name": "Send Multiple Enrollments",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Generate unique event ID",
+                  "const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);",
+                  "const sequence = Math.floor(Math.random() * 10000);",
+                  "const eventId = `evt_${timestamp}_enrollment_bulk_${sequence}`;",
+                  "pm.environment.set('enrollment_event_id', eventId);",
+                  "",
+                  "// Get current ISO timestamp",
+                  "const isoTimestamp = new Date().toISOString();",
+                  "pm.environment.set('event_timestamp', isoTimestamp);",
+                  "",
+                  "// Get environment variables",
+                  "const agentId = pm.environment.get('agent_id') || 'agent_uuid_test';",
+                  "const agentEmail = pm.environment.get('agent_email') || 'test@lashma.com';",
+                  "pm.environment.set('current_agent_id', agentId);",
+                  "pm.environment.set('current_agent_email', agentEmail);",
+                  "pm.environment.set('bulk_count', 5);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function() {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  console.log('✓ Bulk enrollment event sent successfully');",
+                  "  console.log('Count:', pm.environment.get('bulk_count'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{enrollment_signature}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event_type\": \"enrollment_created\",\n  \"event_id\": \"{{enrollment_event_id}}\",\n  \"agent_id\": \"{{current_agent_id}}\",\n  \"agent_email\": \"{{current_agent_email}}\",\n  \"enrollment_count\": 5,\n  \"timestamp\": \"{{event_timestamp}}\",\n  \"signature\": \"{{enrollment_signature}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/webhooks/insurance-events",
+              "host": ["{{base_url}}"],
+              "path": ["api", "webhooks", "insurance-events"]
+            },
+            "description": "Send multiple enrollments in a single event (e.g., batch enrollment)\n\nThe enrollment_count field can be any number >= 1"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Payment Events",
+      "item": [
+        {
+          "name": "Send Payment Processed (Completed)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Generate unique event and payment IDs",
+                  "const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);",
+                  "const sequence = Math.floor(Math.random() * 10000);",
+                  "const eventId = `evt_${timestamp}_payment_${sequence}`;",
+                  "const paymentId = `pay_${timestamp}_TXN_${sequence}`;",
+                  "pm.environment.set('payment_event_id', eventId);",
+                  "pm.environment.set('payment_id', paymentId);",
+                  "",
+                  "// Get current ISO timestamp",
+                  "const isoTimestamp = new Date().toISOString();",
+                  "pm.environment.set('event_timestamp', isoTimestamp);",
+                  "",
+                  "// Get environment variables",
+                  "const agentId = pm.environment.get('agent_id') || 'agent_uuid_test';",
+                  "const agentEmail = pm.environment.get('agent_email') || 'test@lashma.com';",
+                  "pm.environment.set('current_agent_id', agentId);",
+                  "pm.environment.set('current_agent_email', agentEmail);",
+                  "pm.environment.set('payment_status', 'completed');",
+                  "pm.environment.set('payment_type', 'recurring');",
+                  "pm.environment.set('payment_amount', 25000);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function() {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  console.log('✓ Payment processed event sent successfully');",
+                  "  console.log('Payment ID:', pm.environment.get('payment_id'));",
+                  "  console.log('Status:', pm.environment.get('payment_status'));",
+                  "  console.log('Amount:', pm.environment.get('payment_amount'), 'kobo');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{payment_signature}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event_type\": \"payment_processed\",\n  \"event_id\": \"{{payment_event_id}}\",\n  \"agent_id\": \"{{current_agent_id}}\",\n  \"agent_email\": \"{{current_agent_email}}\",\n  \"payment_id\": \"{{payment_id}}\",\n  \"payment_status\": \"{{payment_status}}\",\n  \"payment_type\": \"{{payment_type}}\",\n  \"amount\": {{payment_amount}},\n  \"currency\": \"NGN\",\n  \"timestamp\": \"{{event_timestamp}}\",\n  \"signature\": \"{{payment_signature}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/webhooks/insurance-events",
+              "host": ["{{base_url}}"],
+              "path": ["api", "webhooks", "insurance-events"]
+            },
+            "description": "Send payment processed event with completed status\n\nStatus options: pending, completed, failed, refunded"
+          }
+        },
+        {
+          "name": "Send Payment Processed (Failed)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Generate unique event and payment IDs",
+                  "const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);",
+                  "const sequence = Math.floor(Math.random() * 10000);",
+                  "const eventId = `evt_${timestamp}_payment_${sequence}`;",
+                  "const paymentId = `pay_${timestamp}_TXN_${sequence}`;",
+                  "pm.environment.set('payment_event_id', eventId);",
+                  "pm.environment.set('payment_id', paymentId);",
+                  "",
+                  "const isoTimestamp = new Date().toISOString();",
+                  "pm.environment.set('event_timestamp', isoTimestamp);",
+                  "",
+                  "const agentId = pm.environment.get('agent_id') || 'agent_uuid_test';",
+                  "const agentEmail = pm.environment.get('agent_email') || 'test@lashma.com';",
+                  "pm.environment.set('current_agent_id', agentId);",
+                  "pm.environment.set('current_agent_email', agentEmail);",
+                  "pm.environment.set('payment_status', 'failed');",
+                  "pm.environment.set('payment_type', 'one_time');",
+                  "pm.environment.set('payment_amount', 50000);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function() {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  console.log('✓ Failed payment event sent successfully');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{payment_signature}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event_type\": \"payment_processed\",\n  \"event_id\": \"{{payment_event_id}}\",\n  \"agent_id\": \"{{current_agent_id}}\",\n  \"agent_email\": \"{{current_agent_email}}\",\n  \"payment_id\": \"{{payment_id}}\",\n  \"payment_status\": \"failed\",\n  \"payment_type\": \"one_time\",\n  \"amount\": 50000,\n  \"currency\": \"NGN\",\n  \"timestamp\": \"{{event_timestamp}}\",\n  \"signature\": \"{{payment_signature}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/webhooks/insurance-events",
+              "host": ["{{base_url}}"],
+              "path": ["api", "webhooks", "insurance-events"]
+            },
+            "description": "Send payment processed event with failed status"
+          }
+        },
+        {
+          "name": "Send Payment Processed (Pending)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Generate unique event and payment IDs",
+                  "const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);",
+                  "const sequence = Math.floor(Math.random() * 10000);",
+                  "const eventId = `evt_${timestamp}_payment_${sequence}`;",
+                  "const paymentId = `pay_${timestamp}_TXN_${sequence}`;",
+                  "pm.environment.set('payment_event_id', eventId);",
+                  "pm.environment.set('payment_id', paymentId);",
+                  "pm.environment.set('current_payment_id', paymentId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{payment_signature}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event_type\": \"payment_processed\",\n  \"event_id\": \"{{payment_event_id}}\",\n  \"agent_id\": \"{{current_agent_id}}\",\n  \"agent_email\": \"{{current_agent_email}}\",\n  \"payment_id\": \"{{payment_id}}\",\n  \"payment_status\": \"pending\",\n  \"payment_type\": \"recurring\",\n  \"amount\": 100000,\n  \"currency\": \"NGN\",\n  \"timestamp\": \"{{event_timestamp}}\",\n  \"signature\": \"{{payment_signature}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/webhooks/insurance-events",
+              "host": ["{{base_url}}"],
+              "path": ["api", "webhooks", "insurance-events"]
+            },
+            "description": "Send payment processed event with pending status\n\nUse this before sending payment_status_updated event later"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Payment Status Update Events",
+      "item": [
+        {
+          "name": "Update Payment Status: Pending → Completed",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Generate new event ID (but use same payment ID as before)",
+                  "const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);",
+                  "const sequence = Math.floor(Math.random() * 10000);",
+                  "const updateEventId = `evt_${timestamp}_update_${sequence}`;",
+                  "pm.environment.set('update_event_id', updateEventId);",
+                  "",
+                  "// Can use saved payment_id from previous request or create new one",
+                  "let paymentId = pm.environment.get('payment_id');",
+                  "if (!paymentId) {",
+                  "  paymentId = `pay_${timestamp}_TXN_${sequence}`;",
+                  "}",
+                  "pm.environment.set('update_payment_id', paymentId);",
+                  "",
+                  "const isoTimestamp = new Date().toISOString();",
+                  "pm.environment.set('event_timestamp', isoTimestamp);",
+                  "",
+                  "console.log('Update Event ID:', updateEventId);",
+                  "console.log('Payment ID:', paymentId);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function() {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  console.log('✓ Payment status update sent successfully');",
+                  "  console.log('Payment:', pm.environment.get('update_payment_id'));",
+                  "  console.log('Status: pending → completed');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{payment_status_signature}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event_type\": \"payment_status_updated\",\n  \"event_id\": \"{{update_event_id}}\",\n  \"agent_id\": \"{{current_agent_id}}\",\n  \"agent_email\": \"{{current_agent_email}}\",\n  \"payment_id\": \"{{update_payment_id}}\",\n  \"previous_status\": \"pending\",\n  \"current_status\": \"completed\",\n  \"failure_reason\": null,\n  \"timestamp\": \"{{event_timestamp}}\",\n  \"signature\": \"{{payment_status_signature}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/webhooks/insurance-events",
+              "host": ["{{base_url}}"],
+              "path": ["api", "webhooks", "insurance-events"]
+            },
+            "description": "Send payment status update event\n\nUse the SAME payment_id from the original payment_processed event\nChange the previous_status and current_status fields as needed"
+          }
+        },
+        {
+          "name": "Update Payment Status: Completed → Failed",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Generate new event ID",
+                  "const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);",
+                  "const sequence = Math.floor(Math.random() * 10000);",
+                  "const updateEventId = `evt_${timestamp}_update_${sequence}`;",
+                  "pm.environment.set('update_event_id', updateEventId);",
+                  "",
+                  "// Use saved payment_id",
+                  "let paymentId = pm.environment.get('payment_id');",
+                  "if (!paymentId) {",
+                  "  paymentId = `pay_${timestamp}_TXN_${sequence}`;",
+                  "}",
+                  "pm.environment.set('update_payment_id', paymentId);",
+                  "",
+                  "const isoTimestamp = new Date().toISOString();",
+                  "pm.environment.set('event_timestamp', isoTimestamp);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function() {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{payment_status_signature}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event_type\": \"payment_status_updated\",\n  \"event_id\": \"{{update_event_id}}\",\n  \"agent_id\": \"{{current_agent_id}}\",\n  \"agent_email\": \"{{current_agent_email}}\",\n  \"payment_id\": \"{{update_payment_id}}\",\n  \"previous_status\": \"completed\",\n  \"current_status\": \"failed\",\n  \"failure_reason\": \"chargeback_dispute\",\n  \"timestamp\": \"{{event_timestamp}}\",\n  \"signature\": \"{{payment_status_signature}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/webhooks/insurance-events",
+              "host": ["{{base_url}}"],
+              "path": ["api", "webhooks", "insurance-events"]
+            },
+            "description": "Send payment status update: completed → failed\n\nInclude failure_reason if status changes to failed"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error Testing",
+      "item": [
+        {
+          "name": "Test: Invalid Signature (Should fail with 401)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Use a wrong signature",
+                  "pm.environment.set('test_signature', 'invalid_signature_xyz123');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 401 (Unauthorized)', function() {",
+                  "  pm.response.to.have.status(401);",
+                  "});",
+                  "",
+                  "pm.test('Response contains error message', function() {",
+                  "  pm.response.to.contain('Invalid webhook signature');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer invalid_signature_xyz123"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event_type\": \"enrollment_created\",\n  \"event_id\": \"evt_test_invalid_sig\",\n  \"agent_id\": \"test_agent\",\n  \"agent_email\": \"test@lashma.com\",\n  \"enrollment_count\": 1,\n  \"timestamp\": \"2025-08-14T14:30:00Z\",\n  \"signature\": \"invalid\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/webhooks/insurance-events",
+              "host": ["{{base_url}}"],
+              "path": ["api", "webhooks", "insurance-events"]
+            },
+            "description": "Test invalid signature - should return 401 Unauthorized"
+          }
+        },
+        {
+          "name": "Test: Missing Required Field (Should fail with 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 400 (Bad Request)', function() {",
+                  "  pm.response.to.have.status(400);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer test_signature"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event_type\": \"enrollment_created\",\n  \"event_id\": \"evt_test\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/webhooks/insurance-events",
+              "host": ["{{base_url}}"],
+              "path": ["api", "webhooks", "insurance-events"]
+            },
+            "description": "Test missing required fields - should return 400 Bad Request"
+          }
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "collection",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "console.log('Lashma Webhook Integration Collection Loaded');",
+          "console.log('');",
+          "console.log('SETUP INSTRUCTIONS:');",
+          "console.log('1. Open Environments tab');",
+          "console.log('2. Create new environment: \"Lashma Webhook\"');",
+          "console.log('3. Set these VARIABLES:');",
+          "console.log('   - webhook_secret: (your 256-bit secret key)');",
+          "console.log('   - base_url: https://field-tracker.lashma.com');",
+          "console.log('   - agent_id: (your agent UUID)');",
+          "console.log('   - agent_email: (your agent email)');",
+          "console.log('');",
+          "console.log('COMPUTED VARIABLES (auto-generated):');",
+          "console.log('   - enrollment_signature: HMAC-SHA256');",
+          "console.log('   - payment_signature: HMAC-SHA256');",
+          "console.log('   - payment_status_signature: HMAC-SHA256');",
+          "console.log('   - event_timestamp: Current ISO datetime');",
+          "console.log('   - enrollment_event_id: Unique event ID');",
+          "console.log('   - payment_event_id: Unique event ID');",
+          "console.log('');",
+          "console.log('READY TO SEND WEBHOOKS!');"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "https://field-tracker.lashma.com",
+      "type": "string"
+    },
+    {
+      "key": "webhook_secret",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "agent_id",
+      "value": "agent_uuid_test",
+      "type": "string"
+    },
+    {
+      "key": "agent_email",
+      "value": "test@lashma.com",
+      "type": "string"
+    },
+    {
+      "key": "payment_id",
+      "value": "pay_test_001",
+      "type": "string"
+    },
+    {
+      "key": "enrollment_signature",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "payment_signature",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "payment_status_signature",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "event_timestamp",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "enrollment_event_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "payment_event_id",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

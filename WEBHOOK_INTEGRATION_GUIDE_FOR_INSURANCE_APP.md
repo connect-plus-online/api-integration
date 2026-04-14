@@ -11,7 +11,7 @@
 
 ### Webhook Endpoint
 ```
-POST https://field-tracker.lashma.com/api/webhooks/insurance-events
+POST https://lashma-field-tracker-1010591944835.us-central1.run.app/api/webhooks/insurance-events
 ```
 
 ### Authentication
@@ -426,7 +426,7 @@ $signature = generateSignature(
 
 **Request:**
 ```bash
-curl -X POST https://field-tracker.lashma.com/api/webhooks/insurance-events \
+curl -X POST https://lashma-field-tracker-1010591944835.us-central1.run.app/api/webhooks/insurance-events \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer a1b2c3d4e5f6a7b8c9d0e1f2g3h4i5j6" \
   -d '{
@@ -455,7 +455,7 @@ curl -X POST https://field-tracker.lashma.com/api/webhooks/insurance-events \
 
 **Request:**
 ```bash
-curl -X POST https://field-tracker.lashma.com/api/webhooks/insurance-events \
+curl -X POST https://lashma-field-tracker-1010591944835.us-central1.run.app/api/webhooks/insurance-events \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer b2c3d4e5f6a7b8c9d0e1f2g3h4i5j6k7" \
   -d '{
@@ -505,9 +505,9 @@ curl -X POST https://field-tracker.lashma.com/api/webhooks/insurance-events \
 ## 9. Testing
 
 ### Testing Endpoint
-A test/staging endpoint is available for development:
+For development/staging:
 ```
-POST https://staging-field-tracker.lashma.com/api/webhooks/insurance-events
+POST https://lashma-field-tracker-1010591944835.us-central1.run.app/api/webhooks/insurance-events
 ```
 
 ### Using Postman

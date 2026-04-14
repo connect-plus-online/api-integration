@@ -21,7 +21,7 @@
               "host": ["example", "com"],
               "path": ["README"]
             },
-            "description": "# Setup Instructions\n\n1. **Set Environment Variables:**\n   - Go to \"Environments\" tab\n   - Select or create \"Lashma Webhook\" environment\n   - Set these variables:\n     - `webhook_secret`: Your WEBHOOK_SECRET key (256-bit hex string)\n     - `base_url`: https://field-tracker.lashma.com (or staging URL)\n     - `agent_id`: Your internal agent UUID\n     - `agent_email`: Agent email address\n\n2. **Generate Webhook Secret (One-time):**\n   - Use the \"Generate Webhook Secret\" request to create a random secret\n   - Or provide your own 256-bit hex string\n   - Save it securely\n\n3. **Test Each Event:**\n   - Use the provided requests to send test webhooks\n   - Pre-scripts automatically generate event IDs, timestamps, and signatures\n   - Verify 200 OK responses\n\n4. **Check Logs:**\n   - Review Field Tracker logs for any errors\n   - Verify agent mapping was created\n   - Check event storage in database"
+            "description": "# Setup Instructions\n\n1. **Set Environment Variables:**\n   - Go to \"Environments\" tab\n   - Select or create \"Lashma Webhook\" environment\n   - Set these variables:\n     - `webhook_secret`: Your WEBHOOK_SECRET key (256-bit hex string)\n     - `base_url`: https://lashma-field-tracker-1010591944835.us-central1.run.app\n     - `agent_id`: Your internal agent UUID\n     - `agent_email`: Agent email address\n\n2. **Generate Webhook Secret (One-time):**\n   - Use the \"Generate Webhook Secret\" request to create a random secret\n   - Or provide your own 256-bit hex string\n   - Save it securely\n\n3. **Test Each Event:**\n   - Use the provided requests to send test webhooks\n   - Pre-scripts automatically generate event IDs, timestamps, and signatures\n   - Verify 200 OK responses\n\n4. **Check Logs:**\n   - Review Field Tracker logs for any errors\n   - Verify agent mapping was created\n   - Check event storage in database"
           }
         },
         {
@@ -659,7 +659,7 @@
   "variable": [
     {
       "key": "base_url",
-      "value": "https://field-tracker.lashma.com",
+      "value": "https://lashma-field-tracker-1010591944835.us-central1.run.app",
       "type": "string"
     },
     {

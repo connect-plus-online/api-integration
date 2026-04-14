@@ -44,7 +44,7 @@ WEBHOOK_SECRET=a1b2c3d4e5f6a7b8c9d0e1f2g3h4i5j6k7l8m9n0o1p2q3r4s5t6u7v8w9x0y1z
 2. **Import collection:** `Lashma_Webhook_Integration.postman_collection.json`
 3. **Set environment variables:**
    - `webhook_secret` = Your secret from Step 1
-   - `base_url` = `https://field-tracker.lashma.com`
+   - `base_url` = `https://lashma-field-tracker-1010591944835.us-central1.run.app`
    - `agent_id` = Your internal agent UUID
    - `agent_email` = Agent's email
 4. **Send test requests** (pre-scripts calculate signatures automatically)
@@ -71,7 +71,7 @@ Once tested, send actual webhook events:
 ## 📡 Endpoint
 
 ```
-POST https://field-tracker.lashma.com/api/webhooks/insurance-events
+POST https://lashma-field-tracker-1010591944835.us-central1.run.app/api/webhooks/insurance-events
 Authorization: Bearer <hmac_signature>
 Content-Type: application/json
 ```

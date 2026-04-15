@@ -1,5 +1,213 @@
 # Lashma Webhook Integration Guide for Insurance App
 
+**Version:** 2.0  
+**Audience:** Webhook client developers  
+**Purpose:** Send valid webhook events to Field Tracker and test quickly
+
+---
+
+## 1) Endpoint and Auth
+
+**Endpoint**
+```
+POST https://lashma-field-tracker-1010591944835.us-central1.run.app/api/webhooks/insurance-events
+```
+
+**Headers**
+```
+Content-Type: application/json
+Authorization: Bearer <hmac_sha256_signature>
+```
+
+**HMAC formula**
+```
+payload = HTTP_METHOD + URI_PATH + JSON_STRING_OF_BODY_WITHOUT_SIGNATURE
+signature = HMAC_SHA256_HEX(payload, WEBHOOK_SECRET)
+```
+
+Use:
+- `HTTP_METHOD = "POST"`
+- `URI_PATH = "/api/webhooks/insurance-events"` (if your environment uses a different public path, match the exact server-side path used for verification)
+
+---
+
+## 2) Required Event Types
+
+Your client must send exactly 3 event types:
+
+1. `enrollment_created`
+2. `payment_processed`
+3. `payment_status_updated`
+
+---
+
+## 3) Event Schemas
+
+### A) `enrollment_created`
+```json
+{
+  "event_type": "enrollment_created",
+  "event_id": "evt_unique_id",
+  "agent_id": "agent_uuid",
+  "agent_email": "agent@lashma.com",
+  "enrollment_count": 1,
+  "timestamp": "2026-04-15T14:30:00Z",
+  "signature": "optional_body_copy_of_hmac"
+}
+```
+
+Required fields:
+- `event_type`, `event_id`, `agent_id`, `agent_email`, `enrollment_count`, `timestamp`
+
+---
+
+### B) `payment_processed`
+```json
+{
+  "event_type": "payment_processed",
+  "event_id": "evt_unique_id",
+  "agent_id": "agent_uuid",
+  "agent_email": "agent@lashma.com",
+  "payment_id": "pay_unique_id",
+  "payment_status": "completed",
+  "payment_type": "recurring",
+  "amount": 25000,
+  "currency": "NGN",
+  "timestamp": "2026-04-15T14:35:00Z",
+  "signature": "optional_body_copy_of_hmac"
+}
+```
+
+Required fields:
+- `event_type`, `event_id`, `agent_id`, `agent_email`, `payment_id`, `payment_status`, `payment_type`, `amount`, `currency`, `timestamp`
+
+Allowed values:
+- `payment_status`: `pending`, `completed`, `failed`, `refunded`
+- `payment_type`: `one_time`, `recurring`
+
+---
+
+### C) `payment_status_updated`
+```json
+{
+  "event_type": "payment_status_updated",
+  "event_id": "evt_unique_id",
+  "agent_id": "agent_uuid",
+  "agent_email": "agent@lashma.com",
+  "payment_id": "pay_same_id_as_original",
+  "previous_status": "pending",
+  "current_status": "completed",
+  "failure_reason": null,
+  "timestamp": "2026-04-15T14:40:00Z",
+  "signature": "optional_body_copy_of_hmac"
+}
+```
+
+Required fields:
+- `event_type`, `event_id`, `agent_id`, `agent_email`, `payment_id`, `previous_status`, `current_status`, `timestamp`
+
+Important:
+- `payment_id` must match the original `payment_processed` event for that payment.
+
+---
+
+## 4) Minimal Data Rules
+
+- `event_id` must be unique (idempotency key).
+- `timestamp` must be ISO-8601 UTC (e.g. `2026-04-15T14:40:00Z`).
+- `amount` is integer in smallest unit (NGN kobo).
+- Send only operational metadata (no customer PII).
+
+---
+
+## 5) How to Test
+
+### Option A: Python (recommended first)
+
+Use `webhook_test.py` with:
+```bash
+pip install requests python-dotenv
+python webhook_test.py
+```
+
+Set:
+- `WEBHOOK_SECRET`
+- `BASE_URL`
+- `AGENT_ID`
+- `AGENT_EMAIL`
+
+What to verify:
+- valid events return `200`
+- invalid signature returns `401`
+- invalid payload returns `400`
+
+---
+
+### Option B: cURL
+
+1) Build compact JSON body **without** relying on pretty formatting.
+2) Generate signature from `POST + /api/webhooks/insurance-events + body_without_signature`.
+3) Send request:
+
+```bash
+curl -X POST "https://lashma-field-tracker-1010591944835.us-central1.run.app/api/webhooks/insurance-events" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <computed_hmac>" \
+  -d '{"event_type":"enrollment_created","event_id":"evt_1","agent_id":"agent_uuid","agent_email":"agent@lashma.com","enrollment_count":1,"timestamp":"2026-04-15T14:30:00Z"}'
+```
+
+---
+
+### Option C: Postman
+
+Import `Lashma_Webhook_Integration.postman_collection.json`.
+
+Set environment variables:
+- `webhook_secret`
+- `base_url`
+- `agent_id`
+- `agent_email`
+
+The collection now has a global pre-request signer that:
+- removes `signature` from body for signing
+- computes HMAC with `method + uri + compact_json_body`
+- upserts `Authorization: Bearer <signature>`
+
+---
+
+## 6) Expected Responses
+
+### Success
+`200 OK`
+```json
+{
+  "success": true,
+  "message": "Event processed successfully",
+  "eventId": "evt_..."
+}
+```
+
+### Common Errors
+- `401 Unauthorized`: invalid HMAC signature
+- `400 Bad Request`: missing/invalid fields or agent mapping issue
+- `500 Internal Server Error`: temporary server failure; retry with backoff
+
+---
+
+## 7) Quick Go-Live Checklist
+
+- [ ] Use one stable `WEBHOOK_SECRET` per environment
+- [ ] Generate HMAC exactly from method + URI path + compact JSON body (without `signature`)
+- [ ] Send all 3 event types from production flows
+- [ ] Ensure unique `event_id` for every request
+- [ ] Log request id, event id, status code, and response body
+- [ ] Alert on repeated `401` or `400`
+
+---
+
+**Status:** Ready for integration and client testing.
+# Lashma Webhook Integration Guide for Insurance App
+
 **Version:** 1.0  
 **Date:** April 14, 2026  
 **Audience:** Insurance App Development Team  

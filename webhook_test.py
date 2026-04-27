@@ -1,34 +1,34 @@
 #!/usr/bin/env python3
 
 """
-Lashma Webhook Integration Test Suite
+Lashma Webhook Integration Test Suite (no HMAC — matches refactored API).
 
-This script tests the webhook integration between Insurance App and Field Tracker.
-It generates HMAC-SHA256 signatures, sends webhook events, and validates responses.
-
-Usage:
-    python webhook_test.py
-    python webhook_test.py --interactive
-    python webhook_test.py --webhook-secret <secret> --base-url <url> --agent-id <id> --agent-email <email>
+Tests enrollment_created, payment_processed, payment_status_updated against
+POST {BASE_URL}/api/webhooks/insurance-events
 
 Requirements:
     pip install requests python-dotenv
+
+Usage:
+    python webhook_test.py
+    python webhook_test.py --base-url https://... --agent-email agent@lashma.com
+
+Env (optional):
+    BASE_URL, AGENT_EMAIL
 """
 
 import json
-import hmac
-import hashlib
 import uuid
 import requests
 import os
 import sys
-from datetime import datetime
-from typing import Dict, Tuple, Optional
+import argparse
+from datetime import datetime, timezone
+from typing import Dict, Tuple, Optional, List
 from dataclasses import dataclass
 from dotenv import load_dotenv
 
 
-# Color codes for terminal output
 class Colors:
     GREEN = '\033[92m'
     RED = '\033[91m'
@@ -41,9 +41,7 @@ class Colors:
 
 @dataclass
 class Config:
-    webhook_secret: str
     base_url: str
-    agent_id: str
     agent_email: str
     event_prefix: str = None
 
@@ -52,448 +50,254 @@ class Config:
             self.event_prefix = f"evt_{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
 
-class WebhookSignatureGenerator:
-    """Generate HMAC-SHA256 signatures for webhook requests"""
-
-    @staticmethod
-    def generate_signature(method: str, uri: str, body: str, secret: str) -> str:
-        """
-        Generate HMAC-SHA256 signature for webhook payload
-
-        Args:
-            method: HTTP method (POST, GET, etc.)
-            uri: Request URI path
-            body: Request body as JSON string
-            secret: Webhook secret key
-
-        Returns:
-            Hex-encoded HMAC-SHA256 signature
-        """
-        payload = method + uri + body
-        signature = hmac.new(
-            secret.encode(),
-            payload.encode(),
-            hashlib.sha256
-        ).hexdigest()
-        return signature
-
-
 class WebhookTester:
-    """Test webhook integration with Field Tracker"""
-
     def __init__(self, config: Config):
         self.config = config
-        self.endpoint = f"{config.base_url}/api/webhooks/insurance-events"
+        self.endpoint = f"{config.base_url.rstrip('/')}/api/webhooks/insurance-events"
         self.event_counter = 0
-        self.test_results = []
+        self.test_results: List[Dict] = []
+        self._policy_suffix = uuid.uuid4().hex[:8]
+
+    def _policies(self, n: int) -> List[str]:
+        return [f"LSHS-TST-{self._policy_suffix}-{i + 1}" for i in range(n)]
 
     def _generate_event_id(self) -> str:
-        """Generate unique event ID"""
         self.event_counter += 1
         return f"{self.config.event_prefix}_{self.event_counter}"
 
     def _generate_payment_id(self) -> str:
-        """Generate unique payment ID"""
-        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-        return f"pay_{timestamp}_{uuid.uuid4().hex[:8]}"
+        ts = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
+        return f"pay_{ts}_{uuid.uuid4().hex[:8]}"
 
     def _get_iso_timestamp(self) -> str:
-        """Get current ISO 8601 timestamp"""
-        return datetime.utcnow().isoformat() + 'Z'
+        return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 
-    def _send_webhook(self, event_data: Dict) -> Tuple[int, Dict]:
-        """
-        Send webhook event to Field Tracker
-
-        Args:
-            event_data: Event payload dictionary
-
-        Returns:
-            Tuple of (status_code, response_json)
-        """
-        # Convert to JSON string
-        body_json = json.dumps(event_data)
-
-        # Generate signature
-        signature = WebhookSignatureGenerator.generate_signature(
-            'POST',
-            '/api/webhooks/insurance-events',
-            body_json,
-            self.config.webhook_secret
-        )
-
-        # Prepare headers
-        headers = {
-            'Content-Type': 'application/json',
-            'Authorization': f'Bearer {signature}'
-        }
-
+    def _send(self, event_data: Dict) -> Tuple[int, Dict]:
+        body_json = json.dumps(event_data, separators=(',', ':'))
+        headers = {'Content-Type': 'application/json'}
         try:
             response = requests.post(
                 self.endpoint,
-                data=body_json,
+                data=body_json.encode('utf-8'),
                 headers=headers,
-                timeout=10
+                timeout=30,
             )
-            return response.status_code, response.json()
+            try:
+                body = response.json() if response.text else {}
+            except Exception:
+                body = {'raw': response.text[:500]}
+            return response.status_code, body
         except requests.exceptions.Timeout:
             return 500, {'error': 'Request timeout'}
         except requests.exceptions.ConnectionError:
-            return 500, {'error': 'Connection refused - is Field Tracker running?'}
+            return 500, {'error': 'Connection refused — is the API up?'}
         except Exception as e:
             return 500, {'error': str(e)}
 
     def _print_result(self, test_name: str, status_code: int, expected_code: int, response: Dict):
-        """Print test result with color coding"""
         passed = status_code == expected_code
-        result = {
+        self.test_results.append({
             'name': test_name,
             'passed': passed,
             'status_code': status_code,
             'expected': expected_code,
-            'response': response
-        }
-        self.test_results.append(result)
-
-        status_icon = f"{Colors.GREEN}✓{Colors.RESET}" if passed else f"{Colors.RED}✗{Colors.RESET}"
-        status_color = Colors.GREEN if passed else Colors.RED
-
-        print(f"\n{status_icon} {Colors.BOLD}{test_name}{Colors.RESET}")
-        print(f"  Status: {status_color}{status_code}{Colors.RESET} (expected {expected_code})")
-        
+            'response': response,
+        })
+        icon = f"{Colors.GREEN}✓{Colors.RESET}" if passed else f"{Colors.RED}✗{Colors.RESET}"
+        color = Colors.GREEN if passed else Colors.RED
+        print(f"\n{icon} {Colors.BOLD}{test_name}{Colors.RESET}")
+        print(f"  Status: {color}{status_code}{Colors.RESET} (expected {expected_code})")
         if response:
-            if 'success' in response:
-                print(f"  Response: {Colors.CYAN}{response.get('message', '')}{Colors.RESET}")
+            if 'message' in response:
+                print(f"  Message: {Colors.CYAN}{response.get('message', '')}{Colors.RESET}")
             if 'error' in response:
                 print(f"  Error: {Colors.RED}{response.get('error', '')}{Colors.RESET}")
-            if 'message' in response and 'error' in response:
-                print(f"  Message: {Colors.YELLOW}{response.get('message', '')}{Colors.RESET}")
 
-    def test_enrollment_created(self, count: int = 1) -> bool:
-        """Test enrollment_created event"""
+    def test_enrollment_with_policies(self, enrollment_count: int, policies: List[str]) -> bool:
         event_id = self._generate_event_id()
         event_data = {
             'event_type': 'enrollment_created',
             'event_id': event_id,
-            'agent_id': self.config.agent_id,
             'agent_email': self.config.agent_email,
-            'enrollment_count': count,
+            'enrollment_count': enrollment_count,
+            'policy_numbers': policies,
             'timestamp': self._get_iso_timestamp(),
-            'signature': 'placeholder'  # Field Tracker ignores this
         }
-
-        status_code, response = self._send_webhook(event_data)
+        code, resp = self._send(event_data)
         self._print_result(
-            f'Enrollment Created (count={count})',
-            status_code,
+            f'Enrollment ({enrollment_count} count, {len(policies)} policies)',
+            code,
             200,
-            response
+            resp,
         )
-        return status_code == 200
+        return code == 200
 
-    def test_payment_processed(self, status: str = 'completed', payment_type: str = 'recurring', amount: int = 50000) -> Tuple[bool, str]:
-        """
-        Test payment_processed event
-
-        Args:
-            status: Payment status (completed, pending, failed, refunded)
-            payment_type: Payment type (recurring, one_time)
-            amount: Amount in smallest currency unit
-
-        Returns:
-            Tuple of (success, payment_id)
-        """
+    def test_payment(
+        self,
+        policy_numbers: List[str],
+        status: str = 'completed',
+        payment_type: str = 'recurring',
+        amount: int = 25000,
+    ) -> Tuple[bool, str]:
         payment_id = self._generate_payment_id()
         event_id = self._generate_event_id()
         event_data = {
             'event_type': 'payment_processed',
             'event_id': event_id,
-            'agent_id': self.config.agent_id,
-            'agent_email': self.config.agent_email,
+            'policy_numbers': policy_numbers,
             'payment_id': payment_id,
             'payment_status': status,
             'payment_type': payment_type,
             'amount': amount,
             'currency': 'NGN',
             'timestamp': self._get_iso_timestamp(),
-            'signature': 'placeholder'
         }
-
-        status_code, response = self._send_webhook(event_data)
+        code, resp = self._send(event_data)
         self._print_result(
-            f'Payment Processed ({status}, {payment_type})',
-            status_code,
+            f'Payment ({status}, {payment_type}, policies={len(policy_numbers)})',
+            code,
             200,
-            response
+            resp,
         )
-        return status_code == 200, payment_id
+        return code == 200, payment_id
 
-    def test_payment_status_update(self, payment_id: str, previous_status: str, current_status: str, failure_reason: Optional[str] = None) -> bool:
-        """
-        Test payment_status_updated event
-
-        Args:
-            payment_id: Payment ID from original payment_processed event
-            previous_status: Original payment status
-            current_status: New payment status
-            failure_reason: Optional failure reason if status is 'failed'
-
-        Returns:
-            Success status
-        """
+    def test_payment_status(
+        self,
+        payment_id: str,
+        previous_status: str,
+        current_status: str,
+        failure_reason: Optional[str] = None,
+    ) -> bool:
         event_id = self._generate_event_id()
-        event_data = {
+        event_data: Dict = {
             'event_type': 'payment_status_updated',
             'event_id': event_id,
-            'agent_id': self.config.agent_id,
-            'agent_email': self.config.agent_email,
             'payment_id': payment_id,
             'previous_status': previous_status,
             'current_status': current_status,
-            'failure_reason': failure_reason,
             'timestamp': self._get_iso_timestamp(),
-            'signature': 'placeholder'
         }
-
-        status_code, response = self._send_webhook(event_data)
+        if failure_reason is not None:
+            event_data['failure_reason'] = failure_reason
+        code, resp = self._send(event_data)
         self._print_result(
-            f'Payment Status Update ({previous_status} → {current_status})',
-            status_code,
+            f'Status update ({previous_status} → {current_status})',
+            code,
             200,
-            response
+            resp,
         )
-        return status_code == 200
+        return code == 200
 
-    def test_invalid_signature(self) -> bool:
-        """Test that invalid signature is rejected (401)"""
+    def test_unknown_event_type(self) -> bool:
+        event_data = {
+            'event_type': 'not_a_real_event',
+            'event_id': self._generate_event_id(),
+            'timestamp': self._get_iso_timestamp(),
+        }
+        code, resp = self._send(event_data)
+        self._print_result('Unknown event_type (expect 400)', code, 400, resp)
+        return code == 400
+
+    def test_missing_fields(self) -> bool:
         event_data = {
             'event_type': 'enrollment_created',
             'event_id': self._generate_event_id(),
-            'agent_id': self.config.agent_id,
-            'agent_email': self.config.agent_email,
-            'enrollment_count': 1,
-            'timestamp': self._get_iso_timestamp(),
-            'signature': 'placeholder'
         }
+        code, resp = self._send(event_data)
+        self._print_result('Missing required fields (expect 400)', code, 400, resp)
+        return code == 400
 
-        # Send with invalid signature
-        body_json = json.dumps(event_data)
-        headers = {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer invalid_signature_xyz'
-        }
-
-        try:
-            response = requests.post(
-                self.endpoint,
-                data=body_json,
-                headers=headers,
-                timeout=10
-            )
-            status_code = response.status_code
-            response_json = response.json() if response.text else {}
-        except Exception as e:
-            status_code = 500
-            response_json = {'error': str(e)}
-
-        self._print_result(
-            'Invalid Signature (should be 401)',
-            status_code,
-            401,
-            response_json
-        )
-        return status_code == 401
-
-    def test_missing_fields(self) -> bool:
-        """Test that missing required fields are rejected (400)"""
-        # Send incomplete event
-        event_data = {
-            'event_type': 'enrollment_created',
-            'event_id': self._generate_event_id()
-            # Missing: agent_id, agent_email, enrollment_count, timestamp
-        }
-
-        body_json = json.dumps(event_data)
-        signature = WebhookSignatureGenerator.generate_signature(
-            'POST',
-            '/api/webhooks/insurance-events',
-            body_json,
-            self.config.webhook_secret
-        )
-
-        headers = {
-            'Content-Type': 'application/json',
-            'Authorization': f'Bearer {signature}'
-        }
-
-        try:
-            response = requests.post(
-                self.endpoint,
-                data=body_json,
-                headers=headers,
-                timeout=10
-            )
-            status_code = response.status_code
-            response_json = response.json() if response.text else {}
-        except Exception as e:
-            status_code = 500
-            response_json = {'error': str(e)}
-
-        self._print_result(
-            'Missing Required Fields (should be 400)',
-            status_code,
-            400,
-            response_json
-        )
-        return status_code == 400
-
-    def test_duplicate_event(self) -> bool:
-        """Test that duplicate events are handled gracefully"""
+    def test_duplicate_enrollment(self) -> bool:
         event_id = self._generate_event_id()
         event_data = {
             'event_type': 'enrollment_created',
             'event_id': event_id,
-            'agent_id': self.config.agent_id,
             'agent_email': self.config.agent_email,
             'enrollment_count': 1,
+            'policy_numbers': [f'LSHS-DUP-{self._policy_suffix}'],
             'timestamp': self._get_iso_timestamp(),
-            'signature': 'placeholder'
         }
-
-        # Send first time - should succeed
-        body_json = json.dumps(event_data)
-        signature = WebhookSignatureGenerator.generate_signature(
-            'POST',
-            '/api/webhooks/insurance-events',
-            body_json,
-            self.config.webhook_secret
-        )
-
-        headers = {
-            'Content-Type': 'application/json',
-            'Authorization': f'Bearer {signature}'
-        }
-
-        requests.post(self.endpoint, data=body_json, headers=headers, timeout=10)
-
-        # Send duplicate - should also return 200 (idempotent)
+        body = json.dumps(event_data, separators=(',', ':'))
+        headers = {'Content-Type': 'application/json'}
+        requests.post(self.endpoint, data=body.encode('utf-8'), headers=headers, timeout=30)
+        r = requests.post(self.endpoint, data=body.encode('utf-8'), headers=headers, timeout=30)
         try:
-            response = requests.post(
-                self.endpoint,
-                data=body_json,
-                headers=headers,
-                timeout=10
-            )
-            status_code = response.status_code
-            response_json = response.json() if response.text else {}
-        except Exception as e:
-            status_code = 500
-            response_json = {'error': str(e)}
+            resp = r.json() if r.text else {}
+        except Exception:
+            resp = {}
+        self._print_result('Duplicate enrollment event_id (expect 200)', r.status_code, 200, resp)
+        return r.status_code == 200
 
-        self._print_result(
-            'Duplicate Event (should be idempotent 200)',
-            status_code,
-            200,
-            response_json
-        )
-        return status_code == 200
-
-    def print_summary(self):
-        """Print test summary"""
+    def print_summary(self) -> bool:
         total = len(self.test_results)
         passed = sum(1 for r in self.test_results if r['passed'])
         failed = total - passed
-
         print(f"\n{Colors.BOLD}{'='*60}{Colors.RESET}")
         print(f"{Colors.BOLD}TEST SUMMARY{Colors.RESET}")
         print(f"{Colors.BOLD}{'='*60}{Colors.RESET}")
         print(f"Total Tests:  {total}")
         print(f"Passed:       {Colors.GREEN}{passed}{Colors.RESET}")
         print(f"Failed:       {Colors.RED}{failed}{Colors.RESET}")
-        print(f"Success Rate: {Colors.CYAN}{(passed/total*100):.1f}%{Colors.RESET}")
+        if total:
+            print(f"Success Rate: {Colors.CYAN}{(passed/total*100):.1f}%{Colors.RESET}")
         print(f"{Colors.BOLD}{'='*60}{Colors.RESET}\n")
-
         return failed == 0
 
 
-def get_config() -> Config:
-    """Get configuration from environment or user input"""
+def parse_args():
+    p = argparse.ArgumentParser(description='Webhook integration tests')
+    p.add_argument('--base-url', default=os.getenv('BASE_URL', 'http://localhost:3000'))
+    p.add_argument('--agent-email', default=os.getenv('AGENT_EMAIL', ''))
+    return p.parse_args()
+
+
+def main() -> int:
     load_dotenv()
+    args = parse_args()
+    agent_email = args.agent_email or os.getenv('AGENT_EMAIL') or input('AGENT_EMAIL (must exist in Field Tracker): ').strip()
+    if not agent_email:
+        print(f"{Colors.RED}AGENT_EMAIL is required.{Colors.RESET}")
+        return 1
 
-    webhook_secret = os.getenv('WEBHOOK_SECRET') or input('Enter WEBHOOK_SECRET: ')
-    base_url = os.getenv('BASE_URL') or input('Enter BASE_URL (default: http://localhost:3000): ') or 'http://localhost:3000'
-    agent_id = os.getenv('AGENT_ID') or input('Enter AGENT_ID (default: agent_uuid_test): ') or 'agent_uuid_test'
-    agent_email = os.getenv('AGENT_EMAIL') or input('Enter AGENT_EMAIL (default: test@lashma.com): ') or 'test@lashma.com'
-
-    return Config(
-        webhook_secret=webhook_secret,
-        base_url=base_url,
-        agent_id=agent_id,
-        agent_email=agent_email
-    )
-
-
-def main():
-    """Run all tests"""
+    config = Config(base_url=args.base_url, agent_email=agent_email)
     print(f"\n{Colors.BOLD}{Colors.CYAN}{'='*60}{Colors.RESET}")
-    print(f"{Colors.BOLD}{Colors.CYAN}Lashma Webhook Integration Test Suite{Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.CYAN}Lashma Webhook Test Suite (no HMAC){Colors.RESET}")
     print(f"{Colors.BOLD}{Colors.CYAN}{'='*60}{Colors.RESET}\n")
-
-    # Get configuration
-    config = get_config()
-    print(f"\n{Colors.CYAN}Configuration:{Colors.RESET}")
-    print(f"  Base URL:     {Colors.GREEN}{config.base_url}{Colors.RESET}")
-    print(f"  Agent ID:     {Colors.GREEN}{config.agent_id}{Colors.RESET}")
-    print(f"  Agent Email:  {Colors.GREEN}{config.agent_email}{Colors.RESET}")
-    print(f"  Secret Length: {Colors.GREEN}{len(config.webhook_secret)} chars{Colors.RESET}\n")
+    print(f"{Colors.CYAN}Endpoint:{Colors.RESET} {config.base_url}/api/webhooks/insurance-events")
+    print(f"{Colors.CYAN}Agent email:{Colors.RESET} {config.agent_email}\n")
 
     tester = WebhookTester(config)
+    p1, p2 = tester._policies(2)
 
-    # Test 1: Basic enrollment event
-    print(f"\n{Colors.BOLD}Test Group 1: Basic Events{Colors.RESET}")
+    print(f"\n{Colors.BOLD}Group 1: Enrollment{Colors.RESET}")
     print("-" * 60)
-    tester.test_enrollment_created(count=1)
+    tester.test_enrollment_with_policies(2, [p1, p2])
+    tester.test_enrollment_with_policies(1, [f'LSHS-TST-{tester._policy_suffix}-single'])
 
-    # Test 2: Bulk enrollment
-    tester.test_enrollment_created(count=5)
-
-    # Test 3: Payment processed (successful)
-    print(f"\n{Colors.BOLD}Test Group 2: Payment Events{Colors.RESET}")
+    print(f"\n{Colors.BOLD}Group 2: Payments (uses policies from first enrollment){Colors.RESET}")
     print("-" * 60)
-    success, payment_id_1 = tester.test_payment_processed(status='completed', payment_type='recurring', amount=50000)
+    ok, pay_completed = tester.test_payment([p1, p2], 'completed', 'recurring', 25000)
+    ok, pay_failed = tester.test_payment([p1], 'failed', 'one_time', 100000)
+    ok, pay_pending = tester.test_payment([p2], 'pending', 'recurring', 75000)
 
-    # Test 4: Payment processed (failed)
-    success, payment_id_2 = tester.test_payment_processed(status='failed', payment_type='one_time', amount=100000)
-
-    # Test 5: Payment processed (pending)
-    success, payment_id_3 = tester.test_payment_processed(status='pending', payment_type='recurring', amount=75000)
-
-    # Test 6: Payment status update (pending → completed)
-    print(f"\n{Colors.BOLD}Test Group 3: Status Updates{Colors.RESET}")
+    print(f"\n{Colors.BOLD}Group 3: Status updates{Colors.RESET}")
     print("-" * 60)
-    tester.test_payment_status_update(payment_id_3, 'pending', 'completed')
+    tester.test_payment_status(pay_pending, 'pending', 'completed')
+    tester.test_payment_status(pay_completed, 'completed', 'failed', 'chargeback')
 
-    # Test 7: Payment status update (completed → failed - chargeback)
-    tester.test_payment_status_update(payment_id_1, 'completed', 'failed', failure_reason='chargeback')
-
-    # Test 8: Error cases
-    print(f"\n{Colors.BOLD}Test Group 4: Error Handling{Colors.RESET}")
+    print(f"\n{Colors.BOLD}Group 4: Validation & idempotency{Colors.RESET}")
     print("-" * 60)
-    tester.test_invalid_signature()
+    tester.test_unknown_event_type()
     tester.test_missing_fields()
-    tester.test_duplicate_event()
+    tester.test_duplicate_enrollment()
 
-    # Print summary
-    success = tester.print_summary()
-
-    if success:
+    ok_all = tester.print_summary()
+    if ok_all:
         print(f"{Colors.GREEN}{Colors.BOLD}✓ All tests passed!{Colors.RESET}\n")
         return 0
-    else:
-        print(f"{Colors.RED}{Colors.BOLD}✗ Some tests failed!{Colors.RESET}\n")
-        return 1
+    print(f"{Colors.RED}{Colors.BOLD}✗ Some tests failed.{Colors.RESET}\n")
+    return 1
 
 
 if __name__ == '__main__':
-    exit_code = main()
-    sys.exit(exit_code)
+    sys.exit(main())

@@ -14,7 +14,7 @@ Usage:
     python webhook_test.py --base-url https://... --agent-email agent@lashma.com
 
 Env (optional):
-    BASE_URL, AGENT_EMAIL
+    BASE_URL, AGENT_EMAIL, SECOND_AGENT_EMAIL
 """
 
 import json
@@ -22,6 +22,7 @@ import uuid
 import requests
 import os
 import sys
+import time
 import argparse
 from datetime import datetime, timezone
 from typing import Dict, Tuple, Optional, List
@@ -43,6 +44,7 @@ class Colors:
 class Config:
     base_url: str
     agent_email: str
+    second_agent_email: str
     event_prefix: str = None
 
     def __post_init__(self):
@@ -198,6 +200,86 @@ class WebhookTester:
         self._print_result('Unknown event_type (expect 400)', code, 400, resp)
         return code == 400
 
+    def test_agent_not_found(self) -> bool:
+        event_data = {
+            'event_type': 'enrollment_created',
+            'event_id': self._generate_event_id(),
+            'agent_email': f"missing.agent.{int(time.time())}@example.com",
+            'enrollment_count': 1,
+            'policy_numbers': [f'LSHS-NOTFOUND-{self._policy_suffix}'],
+            'timestamp': self._get_iso_timestamp(),
+        }
+        code, resp = self._send(event_data)
+        self._print_result('Agent not found (expect 400)', code, 400, resp)
+        return code == 400
+
+    def test_count_mismatch_allowed(self) -> bool:
+        event_data = {
+            'event_type': 'enrollment_created',
+            'event_id': self._generate_event_id(),
+            'agent_email': self.config.agent_email,
+            'enrollment_count': 5,
+            'policy_numbers': [
+                f'LSHS-MISMATCH-{self._policy_suffix}-1',
+                f'LSHS-MISMATCH-{self._policy_suffix}-2',
+            ],
+            'timestamp': self._get_iso_timestamp(),
+        }
+        code, resp = self._send(event_data)
+        self._print_result(
+            'Count mismatch enrollment_count!=policy_numbers (expect 200)',
+            code,
+            200,
+            resp,
+        )
+        return code == 200
+
+    def test_cross_agent_policy_payment(self) -> bool:
+        # Seed mapping for agent A
+        policy_a = f'LSHS-CROSS-{self._policy_suffix}-A'
+        seed_a = {
+            'event_type': 'enrollment_created',
+            'event_id': self._generate_event_id(),
+            'agent_email': self.config.agent_email,
+            'enrollment_count': 1,
+            'policy_numbers': [policy_a],
+            'timestamp': self._get_iso_timestamp(),
+        }
+        self._send(seed_a)
+
+        # Seed mapping for agent B
+        policy_b = f'LSHS-CROSS-{self._policy_suffix}-B'
+        seed_b = {
+            'event_type': 'enrollment_created',
+            'event_id': self._generate_event_id(),
+            'agent_email': self.config.second_agent_email,
+            'enrollment_count': 1,
+            'policy_numbers': [policy_b],
+            'timestamp': self._get_iso_timestamp(),
+        }
+        self._send(seed_b)
+
+        # Send one payment containing policies mapped to two different agents
+        event_data = {
+            'event_type': 'payment_processed',
+            'event_id': self._generate_event_id(),
+            'policy_numbers': [policy_a, policy_b],
+            'payment_id': self._generate_payment_id(),
+            'payment_status': 'completed',
+            'payment_type': 'recurring',
+            'amount': 25000,
+            'currency': 'NGN',
+            'timestamp': self._get_iso_timestamp(),
+        }
+        code, resp = self._send(event_data)
+        self._print_result(
+            'Payment with policy_numbers across different agents (expect 200)',
+            code,
+            200,
+            resp,
+        )
+        return code == 200
+
     def test_missing_fields(self) -> bool:
         event_data = {
             'event_type': 'enrollment_created',
@@ -248,23 +330,36 @@ def parse_args():
     p = argparse.ArgumentParser(description='Webhook integration tests')
     p.add_argument('--base-url', default=os.getenv('BASE_URL', 'http://localhost:3000'))
     p.add_argument('--agent-email', default=os.getenv('AGENT_EMAIL', ''))
+    p.add_argument('--second-agent-email', default=os.getenv('SECOND_AGENT_EMAIL', ''))
     return p.parse_args()
 
 
 def main() -> int:
     load_dotenv()
     args = parse_args()
-    agent_email = args.agent_email or os.getenv('AGENT_EMAIL') or input('AGENT_EMAIL (must exist in Field Tracker): ').strip()
+    default_primary = 'dagogodboss@coms.com'
+    default_second = 'dagogodboss@gail.com'
+    agent_email = args.agent_email or os.getenv('AGENT_EMAIL') or default_primary
+    second_agent_email = (
+        args.second_agent_email
+        or os.getenv('SECOND_AGENT_EMAIL')
+        or default_second
+    )
     if not agent_email:
         print(f"{Colors.RED}AGENT_EMAIL is required.{Colors.RESET}")
         return 1
 
-    config = Config(base_url=args.base_url, agent_email=agent_email)
+    config = Config(
+        base_url=args.base_url,
+        agent_email=agent_email,
+        second_agent_email=second_agent_email,
+    )
     print(f"\n{Colors.BOLD}{Colors.CYAN}{'='*60}{Colors.RESET}")
     print(f"{Colors.BOLD}{Colors.CYAN}Lashma Webhook Test Suite (no HMAC){Colors.RESET}")
     print(f"{Colors.BOLD}{Colors.CYAN}{'='*60}{Colors.RESET}\n")
     print(f"{Colors.CYAN}Endpoint:{Colors.RESET} {config.base_url}/api/webhooks/insurance-events")
-    print(f"{Colors.CYAN}Agent email:{Colors.RESET} {config.agent_email}\n")
+    print(f"{Colors.CYAN}Agent email:{Colors.RESET} {config.agent_email}")
+    print(f"{Colors.CYAN}Second agent email:{Colors.RESET} {config.second_agent_email}\n")
 
     tester = WebhookTester(config)
     p1, p2 = tester._policies(2)
@@ -290,6 +385,12 @@ def main() -> int:
     tester.test_unknown_event_type()
     tester.test_missing_fields()
     tester.test_duplicate_enrollment()
+    tester.test_agent_not_found()
+    tester.test_count_mismatch_allowed()
+
+    print(f"\n{Colors.BOLD}Group 5: Multi-agent policy attribution{Colors.RESET}")
+    print("-" * 60)
+    tester.test_cross_agent_policy_payment()
 
     ok_all = tester.print_summary()
     if ok_all:
